@@ -24,16 +24,17 @@ import { UpdateUserDto } from './dto/update-user.dto';
 import { QueryUsersDto } from './dto/query-users.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { UserResponseDto } from './dto/user-response.dto';
-import { AuthGuard } from '../../common/guards/auth.guard';
+import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/user.decorator';
 import { UserRole } from '../../common/interfaces/user.interface';
 import  type { User } from '../../common/interfaces/user.interface';
+import * as bcrypt from 'bcrypt';
 
 @ApiTags('users')
 @ApiBearerAuth('access-token')
-@UseGuards(AuthGuard, RolesGuard)
+@UseGuards(AuthGuard('jwt'), RolesGuard)
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
@@ -50,7 +51,7 @@ export class UsersController {
     type: UserResponseDto,
   })
   create(@Body() createUserDto: CreateUserDto, @CurrentUser() user: User): Promise<UserResponseDto> {
-    return this.usersService.create(createUserDto, user);
+    return this.usersService.create(createUserDto);
   }
 
   @Get()
@@ -63,7 +64,8 @@ export class UsersController {
   @ApiQuery({ name: 'companyId', required: false, type: String })
   @ApiQuery({ name: 'search', required: false, type: String })
   findAll(@Query() queryDto: QueryUsersDto, @CurrentUser() user: User) {
-    return this.usersService.findAll(queryDto, user);
+    const companyId = queryDto.companyId || (user.role !== 'super_admin' ? user.companyId : undefined);
+    return this.usersService.findAll(companyId);
   }
 
   @Get('by-company/:companyId')
@@ -81,21 +83,21 @@ export class UsersController {
   }
 
   @Get(':uid')
-  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.MAID)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.CLEANER)
   @ApiOperation({ summary: 'Obtener usuario por ID' })
   findOne(@Param('uid') uid: string, @CurrentUser() user: User): Promise<UserResponseDto> {
     return this.usersService.findOne(uid, user);
   }
 
   @Patch(':uid')
-  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.MAID)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.CLEANER)
   @ApiOperation({ summary: 'Actualizar usuario' })
   update(
     @Param('uid') uid: string,
     @Body() updateUserDto: UpdateUserDto,
     @CurrentUser() user: User,
   ): Promise<UserResponseDto> {
-    return this.usersService.update(uid, updateUserDto, user);
+    return this.usersService.update(uid, updateUserDto);
   }
 
   @Delete(':uid')
@@ -103,27 +105,29 @@ export class UsersController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Eliminar usuario (soft delete)' })
   remove(@Param('uid') uid: string, @CurrentUser() user: User): Promise<void> {
-    return this.usersService.remove(uid, user);
+    return this.usersService.remove(uid);
   }
 
   @Patch(':uid/password')
-  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.MAID)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.CLEANER)
   @ApiOperation({ summary: 'Cambiar contraseña' })
-  changePassword(
+  async changePassword(
     @Param('uid') uid: string,
     @Body() changePasswordDto: ChangePasswordDto,
     @CurrentUser() user: User,
   ) {
-    return this.usersService.changePassword(uid, changePasswordDto, user);
+    // Hashear la nueva contraseña antes de guardar
+    const hashedPassword = await bcrypt.hash(changePasswordDto.newPassword, 10);
+    return this.usersService.changePassword(uid, hashedPassword);
   }
 
   @Patch(':uid/last-login')
-  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.MAID)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.CLEANER)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Actualizar último login' })
   updateLastLogin(@Param('uid') uid: string, @CurrentUser() user: User) {
     // Solo el propio usuario puede actualizar su último login
-    if (uid !== user.uid) {
+    if (uid !== user.id) {
       throw new Error('Solo podés actualizar tu propio último login');
     }
     return this.usersService.updateLastLogin(uid);

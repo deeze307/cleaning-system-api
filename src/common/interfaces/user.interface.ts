@@ -1,21 +1,19 @@
 export interface User {
-  uid: string;
+  id: string;
   email: string;
+  passwordHash: string;
   name: string;
   role: UserRole;
-  phone?: string;
-  companyId: string;
+  companyId?: string;
   isActive: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-  lastLoginAt?: Date;
-  mustChangePassword?: boolean;
+  lastLoginAt?: string;
+  createdAt: string;
+  updatedAt: string;
 }
-
 export enum UserRole {
   SUPER_ADMIN = 'super_admin',
   ADMIN = 'admin',
-  MAID = 'maid',
+  CLEANER = 'cleaner',
 }
 
 export interface Company {
@@ -25,8 +23,8 @@ export interface Company {
   plan: CompanyPlan;
   maxBuildings: number;
   isActive: boolean;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export enum CompanyPlan {
@@ -68,8 +66,8 @@ export interface Room {
   description?: string;
   cleaningNotes?: string;
   isActive: boolean;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface BedConfiguration {
@@ -82,18 +80,19 @@ export interface CleaningTask {
   id: string;
   roomId: string;
   assignedTo?: string;
-  date: Date;
+  scheduledDate: string;
   status: TaskStatus;
-  completedAt?: Date;
+  completedAt?: string;
   completedBy?: string;
   observations?: string;
   images?: string[];
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export enum TaskStatus {
-  PENDING = 'pending',
+  TO_CLEAN = 'to_clean',
+  TO_CLEAN_URGENT = 'to_clean_urgent',
   URGENT = 'urgent',
   IN_PROGRESS = 'in_progress',
   COMPLETED = 'completed',

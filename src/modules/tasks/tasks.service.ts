@@ -25,7 +25,7 @@ export class TasksService {
     const firestore = this.firebaseConfig.firestore;
     
     // Solo admins y super admins pueden crear tareas
-    if (createdBy.role === UserRole.MAID) {
+    if (createdBy.role === UserRole.CLEANER) {
       throw new ForbiddenException('No tenés permisos para crear tareas');
     }
 
@@ -37,7 +37,7 @@ export class TasksService {
     if (createTaskDto.assignedTo) {
       assignedToUser = await this.usersService.findOne(createTaskDto.assignedTo, createdBy);
       
-      if (assignedToUser.role !== UserRole.MAID) {
+      if (assignedToUser.role !== UserRole.CLEANER) {
         throw new BadRequestException('Solo se puede asignar tareas a mucamas');
       }
       
@@ -46,14 +46,14 @@ export class TasksService {
       }
     }
 
-    const now = new Date();
-    const taskDate = new Date(createTaskDto.date);
+    const now = new Date().toISOString();
+    const taskDate = new Date(createTaskDto.scheduledDate).toISOString();
     
     const taskData: Omit<CleaningTask, 'id'> = {
       roomId: createTaskDto.roomId,
       assignedTo: createTaskDto.assignedTo,
-      date: taskDate,
-      status: createTaskDto.status || TaskStatus.PENDING,
+      scheduledDate: taskDate,
+      status: createTaskDto.status || TaskStatus.TO_CLEAN,
       observations: createTaskDto.observations,
       images: [],
       createdAt: now,
@@ -89,7 +89,7 @@ export class TasksService {
     
     let query = firestore
       .collection(this.tasksCollection)
-      .orderBy('date', 'desc');
+      .orderBy('scheduledDate', 'desc');
 
     // Aplicar filtros
     if (queryDto.roomId) {
@@ -107,11 +107,11 @@ export class TasksService {
     }
 
     if (queryDto.dateFrom) {
-      query = query.where('date', '>=', new Date(queryDto.dateFrom));
+      query = query.where('scheduledDate', '>=', new Date(queryDto.dateFrom));
     }
 
     if (queryDto.dateTo) {
-      query = query.where('date', '<=', new Date(queryDto.dateTo));
+      query = query.where('scheduledDate', '<=', new Date(queryDto.dateTo));
     }
 
     const snapshot = await query.get();
@@ -129,8 +129,8 @@ export class TasksService {
           }
 
           // Para mucamas, solo mostrar sus propias tareas o tareas sin asignar de su empresa
-          if (requestUser.role === UserRole.MAID) {
-            const isAssignedToMe = taskData.assignedTo === requestUser.uid;
+          if (requestUser.role === UserRole.CLEANER) {
+            const isAssignedToMe = taskData.assignedTo === requestUser.id;
             const isUnassigned = !taskData.assignedTo && room.companyId === requestUser.companyId;
             
             if (!isAssignedToMe && !isUnassigned) {
@@ -170,7 +170,7 @@ export class TasksService {
             companyName: room.companyName,
             assignedToName,
             completedByName,
-            isOverdue: this.isTaskOverdue(taskData.date, taskData.status),
+            isOverdue: this.isTaskOverdue(taskData.scheduledDate, taskData.status),
             bedSummary: room.bedSummary,
             ...taskDataWithoutId,
           } as TaskResponseDto;
@@ -216,8 +216,8 @@ export class TasksService {
     const room = await this.roomsService.findOne(taskData.roomId, requestUser);
 
     // Para mucamas, verificar que es su tarea o una sin asignar de su empresa
-    if (requestUser.role === UserRole.MAID) {
-      const isAssignedToMe = taskData.assignedTo === requestUser.uid;
+    if (requestUser.role === UserRole.CLEANER) {
+      const isAssignedToMe = taskData.assignedTo === requestUser.id;
       const isUnassigned = !taskData.assignedTo && room.companyId === requestUser.companyId;
       
       if (!isAssignedToMe && !isUnassigned) {
@@ -257,7 +257,7 @@ export class TasksService {
       companyName: room.companyName,
       assignedToName,
       completedByName,
-      isOverdue: this.isTaskOverdue(taskData.date, taskData.status),
+      isOverdue: this.isTaskOverdue(taskData.scheduledDate, taskData.status),
       bedSummary: room.bedSummary,
       ...taskDataWithoutId,
     };
@@ -278,7 +278,7 @@ export class TasksService {
     const task = await this.findOne(id, requestUser);
 
     // Las mucamas no pueden modificar tareas, solo completarlas
-    if (requestUser.role === UserRole.MAID) {
+    if (requestUser.role === UserRole.CLEANER) {
       throw new ForbiddenException('Las mucamas no pueden modificar tareas. Usá el endpoint de completar tarea.');
     }
 
@@ -286,7 +286,7 @@ export class TasksService {
     if (updateTaskDto.assignedTo) {
       const assignedUser = await this.usersService.findOne(updateTaskDto.assignedTo, requestUser);
       
-      if (assignedUser.role !== UserRole.MAID) {
+      if (assignedUser.role !== UserRole.CLEANER) {
         throw new BadRequestException('Solo se puede asignar tareas a mucamas');
       }
       
@@ -318,8 +318,8 @@ export class TasksService {
     const task = await this.findOne(id, requestUser);
 
     // Para mucamas, verificar que es su tarea asignada o una sin asignar que pueden tomar
-    if (requestUser.role === UserRole.MAID) {
-      const isAssignedToMe = taskData.assignedTo === requestUser.uid;
+    if (requestUser.role === UserRole.CLEANER) {
+      const isAssignedToMe = taskData.assignedTo === requestUser.id;
       const isUnassigned = !taskData.assignedTo && task.companyId === requestUser.companyId;
       
       if (!isAssignedToMe && !isUnassigned) {
@@ -336,10 +336,10 @@ export class TasksService {
     const updateData = {
       status: TaskStatus.COMPLETED,
       completedAt: now,
-      completedBy: requestUser.uid,
+      completedBy: requestUser.id,
       observations: completeTaskDto.observations || taskData.observations,
       images: completeTaskDto.images || taskData.images || [],
-      assignedTo: taskData.assignedTo || requestUser.uid, // Asignar automáticamente si no estaba asignada
+      assignedTo: taskData.assignedTo || requestUser.id, // Asignar automáticamente si no estaba asignada
       updatedAt: now,
     };
 
@@ -355,7 +355,7 @@ export class TasksService {
     const task = await this.findOne(id, requestUser);
 
     // Solo mucamas pueden marcar como en progreso
-    if (requestUser.role !== UserRole.MAID) {
+    if (requestUser.role !== UserRole.CLEANER) {
       throw new ForbiddenException('Solo las mucamas pueden marcar tareas como en progreso');
     }
 
@@ -363,20 +363,20 @@ export class TasksService {
     const taskDoc = await docRef.get();
     const taskData = taskDoc.data() as CleaningTask;
     
-    const isAssignedToMe = taskData.assignedTo === requestUser.uid;
+    const isAssignedToMe = taskData.assignedTo === requestUser.id;
     const isUnassigned = !taskData.assignedTo && task.companyId === requestUser.companyId;
     
     if (!isAssignedToMe && !isUnassigned) {
       throw new ForbiddenException('No podés marcar esta tarea como en progreso');
     }
 
-    if (taskData.status !== TaskStatus.PENDING && taskData.status !== TaskStatus.URGENT) {
+    if (taskData.status !== TaskStatus.TO_CLEAN && taskData.status !== TaskStatus.TO_CLEAN_URGENT && taskData.status !== TaskStatus.URGENT) {
       throw new BadRequestException('Solo se pueden marcar como en progreso las tareas pendientes o urgentes');
     }
 
     const updateData = {
       status: TaskStatus.IN_PROGRESS,
-      assignedTo: taskData.assignedTo || requestUser.uid, // Asignar automáticamente si no estaba asignada
+      assignedTo: taskData.assignedTo || requestUser.id, // Asignar automáticamente si no estaba asignada
       updatedAt: new Date(),
     };
 
@@ -414,7 +414,7 @@ export class TasksService {
     const firestore = this.firebaseConfig.firestore;
     
     // Solo admins pueden eliminar tareas
-    if (requestUser.role === UserRole.MAID) {
+    if (requestUser.role === UserRole.CLEANER) {
       throw new ForbiddenException('No tenés permisos para eliminar tareas');
     }
 
@@ -457,7 +457,7 @@ export class TasksService {
   }
 
   async getMyTasks(requestUser: User): Promise<TaskResponseDto[]> {
-    if (requestUser.role !== UserRole.MAID) {
+    if (requestUser.role !== UserRole.CLEANER) {
       throw new ForbiddenException('Solo las mucamas pueden ver sus tareas asignadas');
     }
 
@@ -466,17 +466,17 @@ export class TasksService {
     // Obtener tareas asignadas a la mucama
     const assignedTasksSnapshot = await firestore
       .collection(this.tasksCollection)
-      .where('assignedTo', '==', requestUser.uid)
-      .where('status', 'in', [TaskStatus.PENDING, TaskStatus.URGENT, TaskStatus.IN_PROGRESS])
-      .orderBy('date', 'asc')
+      .where('assignedTo', '==', requestUser.id)
+      .where('status', 'in', [TaskStatus.TO_CLEAN, TaskStatus.TO_CLEAN_URGENT, TaskStatus.URGENT, TaskStatus.IN_PROGRESS])
+      .orderBy('scheduledDate', 'asc')
       .get();
 
     // Obtener tareas sin asignar de su empresa
     const unassignedTasksSnapshot = await firestore
       .collection(this.tasksCollection)
       .where('assignedTo', '==', null)
-      .where('status', 'in', [TaskStatus.PENDING, TaskStatus.URGENT])
-      .orderBy('date', 'asc')
+      .where('status', 'in', [TaskStatus.TO_CLEAN, TaskStatus.TO_CLEAN_URGENT, TaskStatus.URGENT])
+      .orderBy('scheduledDate', 'asc')
       .get();
 
     const allTaskDocs = [...assignedTasksSnapshot.docs, ...unassignedTasksSnapshot.docs];
@@ -494,12 +494,15 @@ export class TasksService {
     return tasks.filter(task => task !== null);
   }
 
-  private isTaskOverdue(taskDate: Date, status: TaskStatus): boolean {
+  private isTaskOverdue(taskDate: string, status: TaskStatus): boolean {
     if (status === TaskStatus.COMPLETED || status === TaskStatus.VERIFIED) {
       return false;
     }
-    
+
     const now = new Date();
-    return taskDate < now;
+    const taskDateTime = new Date(taskDate);
+    
+    // Comparar las fechas
+    return taskDateTime < now;
   }
 }

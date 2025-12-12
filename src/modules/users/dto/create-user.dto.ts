@@ -1,66 +1,37 @@
-import { IsString, IsEmail, MinLength, MaxLength, IsEnum, IsOptional, IsBoolean } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
-import { UserRole } from '../../../common/interfaces/user.interface';
+import { IsEmail, IsString, IsEnum, IsOptional, IsBoolean, MinLength } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { UserRole } from 'src/common/interfaces/user.interface';
 
 export class CreateUserDto {
-  @ApiProperty({
-    description: 'Correo electrónico del usuario',
-    example: 'mucama@hotelplaza.com',
-  })
+  @ApiProperty({ example: 'admin@hotel.com' })
   @IsEmail()
   email: string;
 
-  @ApiProperty({
-    description: 'Contraseña temporal (será cambiada en primer login)',
-    example: 'TempPass123!',
-    minLength: 6,
-  })
+  @ApiPropertyOptional({ example: 'hashedPasswordHere' })
+  @IsOptional()
   @IsString()
-  @MinLength(6)
-  password: string;
+  passwordHash?: string;
 
-  @ApiProperty({
-    description: 'Nombre completo del usuario',
-    example: 'María González',
-    minLength: 2,
-    maxLength: 100,
-  })
+  @ApiPropertyOptional({ example: '2024-01-15T10:30:00Z' })
+  @IsOptional()
   @IsString()
-  @MinLength(2)
-  @MaxLength(100)
+  lastLoginAt?: string;
+
+  @ApiProperty({ example: 'Juan Pérez' })
+  @IsString()
   name: string;
 
-  @ApiProperty({
-    description: 'Rol del usuario',
-    enum: UserRole,
-    example: UserRole.MAID,
-  })
-  @IsEnum(UserRole)
+  @ApiProperty({ enum: [UserRole], example: 'admin' })
+  @IsEnum([UserRole])
   role: UserRole;
 
-  @ApiProperty({
-    description: 'Teléfono del usuario (opcional)',
-    example: '+549114567890',
-    required: false,
-  })
-  @IsOptional()
-  @IsString()
-  phone?: string;
-
-  @ApiProperty({
-    description: 'Estado activo del usuario',
-    example: true,
-    default: true,
-  })
-  @IsOptional()
-  @IsBoolean()
-  isActive?: boolean = true;
-
-  @ApiProperty({
-    description: 'ID de empresa (solo super admins pueden especificar, otros usan su empresa)',
-    required: false,
-  })
+  @ApiPropertyOptional({ example: 'company123' })
   @IsOptional()
   @IsString()
   companyId?: string;
+
+  @ApiPropertyOptional({ example: true })
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
 }

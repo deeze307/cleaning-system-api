@@ -36,7 +36,7 @@ export class BuildingsService {
     }
 
     // Verificar que la empresa existe
-    const company = await this.companiesService.findOne(targetCompanyId);
+    const company = await this.companiesService.findOne(targetCompanyId!);
 
     // Verificar límite de edificios según el plan
     const currentBuildingsSnapshot = await firestore
@@ -65,7 +65,7 @@ export class BuildingsService {
 
     const now = new Date();
     const buildingData: Omit<Building, 'id'> = {
-      companyId: targetCompanyId,
+      companyId: targetCompanyId!,
       name: createBuildingDto.name,
       type: createBuildingDto.type,
       address: createBuildingDto.address,
@@ -105,7 +105,7 @@ export class BuildingsService {
     // Determinar filtro de empresa según el rol
     let companyFilter = queryDto.companyId;
     
-    if (requestUser.role === UserRole.ADMIN || requestUser.role === UserRole.MAID) {
+    if (requestUser.role === UserRole.ADMIN || requestUser.role === UserRole.CLEANER) {
       companyFilter = requestUser.companyId;
     }
 
@@ -195,7 +195,7 @@ export class BuildingsService {
     const buildingData = doc.data() as Building;
 
     // Verificar permisos
-    if (requestUser.role === UserRole.ADMIN || requestUser.role === UserRole.MAID) {
+    if (requestUser.role === UserRole.ADMIN || requestUser.role === UserRole.CLEANER) {
       if (buildingData.companyId !== requestUser.companyId) {
         throw new ForbiddenException('No tenés acceso a edificios de otras empresas');
       }
@@ -232,7 +232,7 @@ export class BuildingsService {
       throw new ForbiddenException('No podés modificar edificios de otras empresas');
     }
 
-    if (requestUser.role === UserRole.MAID) {
+    if (requestUser.role === UserRole.CLEANER) {
       throw new ForbiddenException('No tenés permisos para modificar edificios');
     }
 
@@ -277,7 +277,7 @@ export class BuildingsService {
       throw new ForbiddenException('No podés eliminar edificios de otras empresas');
     }
 
-    if (requestUser.role === UserRole.MAID) {
+    if (requestUser.role === UserRole.CLEANER) {
       throw new ForbiddenException('No tenés permisos para eliminar edificios');
     }
 
@@ -366,7 +366,7 @@ export class BuildingsService {
       const [pendingTasksSnapshot, completedTodaySnapshot] = await Promise.all([
         firestore.collection(this.tasksCollection)
           .where('roomId', '==', roomDoc.id)
-          .where('status', 'in', ['pending', 'urgent', 'in_progress'])
+          .where('status', 'in', ['to_clean', 'to_clean_urgent', 'urgent', 'in_progress'])
           .get(),
         firestore.collection(this.tasksCollection)
           .where('roomId', '==', roomDoc.id)

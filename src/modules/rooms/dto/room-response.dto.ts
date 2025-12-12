@@ -39,10 +39,10 @@ export class RoomResponseDto {
   isActive: boolean;
 
   @ApiProperty()
-  createdAt: Date;
+  createdAt: string;
 
   @ApiProperty()
-  updatedAt: Date;
+  updatedAt: string;
 
   @ApiProperty()
   totalTasks: number;

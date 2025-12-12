@@ -1,300 +1,158 @@
-import { Injectable, BadRequestException, UnauthorizedException, NotFoundException } from '@nestjs/common';
-import { FirebaseConfigService } from '../../config/firebase.config';
-import { CompaniesService } from '../companies/companies.service';
-import { RegisterDto } from './dto/register.dto';
+import { Injectable, UnauthorizedException, ConflictException } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import { UsersService } from '../users/users.service';
 import { LoginDto } from './dto/login.dto';
-import { ResetPasswordDto } from './dto/reset-password.dto';
+import { RegisterDto } from './dto/register.dto';
 import { AuthResponseDto } from './dto/auth-response.dto';
-import { UserRole, User, CompanyPlan } from '../../common/interfaces/user.interface';
-import * as admin from 'firebase-admin';
+import * as bcrypt from 'bcrypt';
+import { UserRole } from 'src/common/interfaces/user.interface';
 
 @Injectable()
 export class AuthService {
-  private readonly usersCollection = 'users';
-
   constructor(
-    private firebaseConfig: FirebaseConfigService,
-    private companiesService: CompaniesService,
+    private readonly usersService: UsersService,
+    private readonly jwtService: JwtService,
   ) {}
 
-  async register(registerDto: RegisterDto): Promise<AuthResponseDto> {
-    const { email, password, name, role, companyName, companyDescription, companyPlan, companyId } = registerDto;
-    let userRecord: admin.auth.UserRecord | undefined;
-    try {
-      // Crear usuario en Firebase Auth
-      userRecord = await this.firebaseConfig.auth.createUser({
-        email,
-        password,
-        displayName: name,
-      });
-
-      let finalCompanyId: string;
-      let companyNameForResponse = '';
-
-      if (role === UserRole.ADMIN) {
-        // Los admins pueden crear una nueva empresa o ser asignados a una existente
-        if (companyName && !companyId) {
-          // Crear nueva empresa
-          const newCompany = await this.companiesService.create({
-            name: companyName,
-            description: companyDescription,
-            plan: companyPlan || CompanyPlan.BASIC,
-            maxBuildings: this.getMaxBuildingsByPlan(companyPlan || CompanyPlan.BASIC),
-            isActive: true,
-          });
-          finalCompanyId = newCompany.id;
-          companyNameForResponse = newCompany.name;
-        } else if (companyId) {
-          // Verificar que la empresa existe
-          const company = await this.companiesService.findOne(companyId);
-          finalCompanyId = companyId;
-          companyNameForResponse = company.name;
-        } else {
-          throw new BadRequestException('Los administradores deben especificar una empresa o crear una nueva');
-        }
-      } else if (role === UserRole.MAID) {
-        // Las mucamas deben ser asignadas a una empresa existente
-        if (!companyId) {
-          throw new BadRequestException('Las mucamas deben ser asignadas a una empresa existente');
-        }
-        const company = await this.companiesService.findOne(companyId);
-        finalCompanyId = companyId;
-        companyNameForResponse = company.name;
-      } else if (role === UserRole.SUPER_ADMIN) {
-        // Los super admins no pertenecen a ninguna empresa específica
-        finalCompanyId = 'system';
-        companyNameForResponse = 'Sistema';
-      } else {
-        throw new BadRequestException('Rol de usuario no válido');
-      }
-
-      // Crear documento de usuario en Firestore
-      const now = new Date();
-      const userData: Omit<User, 'uid'> = {
-        email,
-        name,
-        role,
-        companyId: finalCompanyId,
-        isActive: true,
-        createdAt: now,
-        updatedAt: now,
-      };
-
-      await this.firebaseConfig.firestore
-        .collection(this.usersCollection)
-        .doc(userRecord.uid)
-        .set(userData);
-
-      // Generar custom token para login automático
-      const customToken = await this.firebaseConfig.auth.createCustomToken(userRecord.uid);
-
-      return {
-        uid: userRecord.uid,
-        email,
-        name,
-        role,
-        companyId: finalCompanyId,
-        companyName: companyNameForResponse,
-        accessToken: customToken,
-        isActive: true,
-        createdAt: now,
-      };
-
-    } catch (error) {
-      // Si algo falla, limpiar el usuario de Firebase Auth
-      try {
-        if (userRecord?.uid) {
-          await this.firebaseConfig.auth.deleteUser(userRecord.uid);
-        }
-      } catch (cleanupError) {
-        console.error('Error cleaning up user:', cleanupError);
-      }
-
-      if (error.code === 'auth/email-already-exists') {
-        throw new BadRequestException('Ya existe un usuario con este correo electrónico');
-      }
-
-      throw error;
-    }
-  }
-
   async login(loginDto: LoginDto): Promise<AuthResponseDto> {
-    // Note: El login real se maneja en el frontend con Firebase Auth
-    // Este endpoint es principalmente para obtener los datos del usuario después del login
-    throw new BadRequestException(
-      'Use Firebase Auth SDK en el frontend para login. Este endpoint es para obtener datos de usuario.'
-    );
-  }
+    const { email, password } = loginDto;
 
-  async getUserProfile(uid: string): Promise<AuthResponseDto> {
-    const firestore = this.firebaseConfig.firestore;
-    
-    // Obtener datos del usuario
-    const userDoc = await firestore.collection(this.usersCollection).doc(uid).get();
-    
-    if (!userDoc.exists) {
-      throw new NotFoundException('Usuario no encontrado');
+    const user = await this.usersService.findByEmail(email);
+    if (!user) {
+      throw new UnauthorizedException('Credenciales inválidas');
     }
 
-    const userData = userDoc.data() as User;
-    
-    // Obtener nombre de la empresa
-    let companyName = 'Sistema';
-    if (userData.companyId !== 'system') {
-      try {
-        const company = await this.companiesService.findOne(userData.companyId);
-        companyName = company.name;
-      } catch (error) {
-        console.error('Error fetching company:', error);
-      }
+    if (!user.isActive) {
+      throw new UnauthorizedException('Usuario inactivo');
     }
 
-    // Generar nuevo custom token
-    const customToken = await this.firebaseConfig.auth.createCustomToken(uid);
+    const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
+    if (!isPasswordValid) {
+      throw new UnauthorizedException('Credenciales inválidas');
+    }
+
+    const payload = { 
+      sub: user.id, 
+      email: user.email, 
+      role: user.role,
+      companyId: user.companyId 
+    };
+    
+    const access_token = this.jwtService.sign(payload, {
+      secret: process.env.JWT_SECRET || 'your-secret-key',
+      expiresIn: '24h',
+      algorithm: 'HS256'
+    });
+
+    const { passwordHash, ...userWithoutPassword } = user;
 
     return {
-      uid,
-      email: userData.email,
-      name: userData.name,
-      role: userData.role,
-      companyId: userData.companyId,
-      companyName,
-      accessToken: customToken,
-      isActive: userData.isActive,
-      createdAt: userData.createdAt,
+      access_token,
+      user: userWithoutPassword,
     };
   }
 
-  async verifyToken(token: string): Promise<admin.auth.DecodedIdToken> {
+  async register(registerDto: RegisterDto): Promise<{ message: string }> {
+    const { email, password, name, role, companyId } = registerDto;
+
+    const existingUser = await this.usersService.findByEmail(email);
+    if (existingUser) {
+      throw new ConflictException('El usuario ya existe');
+    }
+
+    const saltRounds = 10;
+    const passwordHash = await bcrypt.hash(password, saltRounds);
+
+    await this.usersService.create({
+      email,
+      passwordHash,
+      name,
+      role,
+      companyId,
+      isActive: true,
+    });
+
+    return { message: 'Usuario creado exitosamente' };
+  }
+
+  async validateUser(userId: string) {
+    return this.usersService.findById(userId);
+  }
+
+  async getProfile(userId: string) {
+    const user = await this.usersService.findById(userId);
+    if (!user) {
+      throw new UnauthorizedException('Usuario no encontrado');
+    }
+
+    const { passwordHash, ...userWithoutPassword } = user;
+    return userWithoutPassword;
+  }
+
+  async verifyToken(token: string): Promise<any> {
     try {
-      const decodedToken = await this.firebaseConfig.auth.verifyIdToken(token);
+      const payload = this.jwtService.verify(token);
+      const user = await this.usersService.findById(payload.sub);
       
-      // Verificar que el usuario existe en Firestore
-      const userDoc = await this.firebaseConfig.firestore
-        .collection(this.usersCollection)
-        .doc(decodedToken.uid)
-        .get();
-
-      if (!userDoc.exists) {
-        throw new UnauthorizedException('Usuario no encontrado en la base de datos');
+      if (!user || !user.isActive) {
+        throw new UnauthorizedException('Token inválido o usuario inactivo');
       }
 
-      const userData = userDoc.data();
-      if (!userData) {
-        throw new UnauthorizedException('Datos de usuario no encontrados');
-      }
-      if (!userData.isActive) {
-        throw new UnauthorizedException('Usuario desactivado');
-      }
-
-      return decodedToken;
+      const { passwordHash, ...userWithoutPassword } = user;
+      return userWithoutPassword;
     } catch (error) {
-      throw new UnauthorizedException('Token inválido o expirado');
+      throw new UnauthorizedException('Token inválido');
     }
   }
 
-  async resetPassword(resetPasswordDto: ResetPasswordDto): Promise<{ message: string }> {
-    const { email } = resetPasswordDto;
-    
-    try {
-      // Verificar que el usuario existe
-      const userRecord = await this.firebaseConfig.auth.getUserByEmail(email);
-      
-      // Generar link de reset
-      const actionCodeSettings = {
-        url: `${process.env.FRONTEND_URL}/login?message=password-reset`,
-        handleCodeInApp: false,
-      };
+  async resetPassword(email: string): Promise<{ message: string }> {
+    const user = await this.usersService.findByEmail(email);
+    if (!user) {
+      return { message: 'Si el email existe, se enviará un link de recuperación' };
+    }
 
-      await this.firebaseConfig.auth.generatePasswordResetLink(email, actionCodeSettings);
-      
-      return {
-        message: 'Se ha enviado un correo electrónico con instrucciones para resetear tu contraseña'
-      };
-    } catch (error) {
-      if (error.code === 'auth/user-not-found') {
-        // Por seguridad, no revelar si el email existe o no
-        return {
-          message: 'Si el correo electrónico existe, recibirás instrucciones para resetear tu contraseña'
-        };
+    // TODO: Implementar envío de email de recuperación
+    // Por ahora solo devolver mensaje
+    return { message: 'Si el email existe, se enviará un link de recuperación' };
+  }
+
+  async updateUserStatus(userId: string, isActive: boolean): Promise<{ message: string }> {
+    const user = await this.usersService.findById(userId);
+    if (!user) {
+      throw new UnauthorizedException('Usuario no encontrado');
+    }
+
+    await this.usersService.update(userId, { isActive });
+    
+    const status = isActive ? 'activado' : 'desactivado';
+    return { message: `Usuario ${status} exitosamente` };
+  }
+
+  async deleteUser(userId: string): Promise<{ message: string }> {
+    const user = await this.usersService.findById(userId);
+    if (!user) {
+      throw new UnauthorizedException('Usuario no encontrado');
+    }
+
+    await this.usersService.remove(userId);
+    return { message: 'Usuario eliminado exitosamente' };
+  }
+
+  async getAuthStats(): Promise<any> {
+    // Obtener estadísticas básicas de autenticación
+    const allUsers = await this.usersService.findAll();
+    
+    const stats = {
+      totalUsers: allUsers.length,
+      activeUsers: allUsers.filter(user => user.isActive).length,
+      inactiveUsers: allUsers.filter(user => !user.isActive).length,
+      usersByRole: {
+        super_admin: allUsers.filter(user => user.role === UserRole.SUPER_ADMIN).length,
+        admin: allUsers.filter(user => user.role === UserRole.ADMIN).length,
+        cleaner: allUsers.filter(user => user.role === UserRole.CLEANER).length,
       }
-      throw error;
-    }
-  }
-
-  async updateUserStatus(uid: string, isActive: boolean): Promise<void> {
-    const firestore = this.firebaseConfig.firestore;
-    
-    await firestore.collection(this.usersCollection).doc(uid).update({
-      isActive,
-      updatedAt: new Date(),
-    });
-
-    // También deshabilitar/habilitar en Firebase Auth
-    await this.firebaseConfig.auth.updateUser(uid, {
-      disabled: !isActive,
-    });
-  }
-
-  async deleteUser(uid: string): Promise<void> {
-    // Soft delete - marcar como inactivo
-    await this.updateUserStatus(uid, false);
-  }
-
-  private getMaxBuildingsByPlan(plan: CompanyPlan): number {
-    switch (plan) {
-      case CompanyPlan.BASIC:
-        return 5;
-      case CompanyPlan.PROFESSIONAL:
-        return 25;
-      case CompanyPlan.ENTERPRISE:
-        return 100;
-      default:
-        return 5;
-    }
-  }
-
-  // Método para que super admins puedan obtener estadísticas
-  async getAuthStats(): Promise<{
-    totalUsers: number;
-    totalCompanies: number;
-    usersByRole: Record<UserRole, number>;
-    activeUsers: number;
-    inactiveUsers: number;
-  }> {
-    const firestore = this.firebaseConfig.firestore;
-    
-    const [usersSnapshot, companiesSnapshot] = await Promise.all([
-      firestore.collection(this.usersCollection).get(),
-      firestore.collection('companies').get(),
-    ]);
-
-    const users = usersSnapshot.docs.map(doc => doc.data() as User);
-    
-    const usersByRole = {
-      [UserRole.SUPER_ADMIN]: 0,
-      [UserRole.ADMIN]: 0,
-      [UserRole.MAID]: 0,
     };
 
-    let activeUsers = 0;
-    let inactiveUsers = 0;
-
-    users.forEach(user => {
-      usersByRole[user.role]++;
-      if (user.isActive) {
-        activeUsers++;
-      } else {
-        inactiveUsers++;
-      }
-    });
-
-    return {
-      totalUsers: users.length,
-      totalCompanies: companiesSnapshot.size,
-      usersByRole,
-      activeUsers,
-      inactiveUsers,
-    };
+    return stats;
   }
 }

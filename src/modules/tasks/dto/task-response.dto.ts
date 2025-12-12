@@ -30,13 +30,13 @@ export class TaskResponseDto {
   assignedToName?: string;
 
   @ApiProperty()
-  date: Date;
+  scheduledDate: string;
 
   @ApiProperty({ enum: TaskStatus })
   status: TaskStatus;
 
   @ApiProperty({ required: false })
-  completedAt?: Date;
+  completedAt?: string;
 
   @ApiProperty({ required: false })
   completedBy?: string;
@@ -51,10 +51,10 @@ export class TaskResponseDto {
   images?: string[];
 
   @ApiProperty()
-  createdAt: Date;
+  createdAt: string;
 
   @ApiProperty()
-  updatedAt: Date;
+  updatedAt: string;
 
   @ApiProperty()
   isOverdue: boolean;

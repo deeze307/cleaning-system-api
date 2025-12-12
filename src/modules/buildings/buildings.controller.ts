@@ -18,12 +18,12 @@ import {
   ApiBearerAuth,
   ApiQuery,
 } from '@nestjs/swagger';
+import { AuthGuard } from '@nestjs/passport';
 import { BuildingsService } from './buildings.service';
 import { CreateBuildingDto } from './dto/create-building.dto';
 import { UpdateBuildingDto } from './dto/update-building.dto';
 import { QueryBuildingsDto } from './dto/query-buildings.dto';
 import { BuildingResponseDto } from './dto/building-response.dto';
-import { AuthGuard } from '../../common/guards/auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/user.decorator';
@@ -32,7 +32,7 @@ import { UserRole, BuildingType } from '../../common/interfaces/user.interface';
 
 @ApiTags('buildings')
 @ApiBearerAuth('access-token')
-@UseGuards(AuthGuard, RolesGuard)
+@UseGuards(AuthGuard('jwt'), RolesGuard)
 @Controller('buildings')
 export class BuildingsController {
   constructor(private readonly buildingsService: BuildingsService) {}
@@ -53,7 +53,7 @@ export class BuildingsController {
   }
 
   @Get()
-  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.MAID)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.CLEANER)
   @ApiOperation({ summary: 'Obtener lista de edificios' })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
@@ -66,14 +66,14 @@ export class BuildingsController {
   }
 
   @Get('by-company/:companyId')
-  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.MAID)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.CLEANER)
   @ApiOperation({ summary: 'Obtener edificios por empresa' })
   getBuildingsByCompany(@Param('companyId') companyId: string, @CurrentUser() user: User) {
     return this.buildingsService.getBuildingsByCompany(companyId, user);
   }
 
   @Get('select-options')
-  @Roles(UserRole.ADMIN, UserRole.MAID)
+  @Roles(UserRole.ADMIN, UserRole.CLEANER)
   @ApiOperation({ 
     summary: 'Obtener edificios en formato para selects',
     description: 'Retorna solo id, nombre y tipo para dropdowns'
@@ -83,7 +83,7 @@ export class BuildingsController {
   }
 
   @Get(':id')
-  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.MAID)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.CLEANER)
   @ApiOperation({ summary: 'Obtener edificio por ID' })
   findOne(@Param('id') id: string, @CurrentUser() user: User): Promise<BuildingResponseDto> {
     return this.buildingsService.findOne(id, user);

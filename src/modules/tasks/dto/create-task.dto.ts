@@ -15,17 +15,17 @@ export class CreateTaskDto {
     example: '2024-12-15T10:00:00Z',
   })
   @IsDateString()
-  date: string;
+  scheduledDate: string;
 
   @ApiProperty({
     description: 'Estado inicial de la tarea',
     enum: TaskStatus,
-    example: TaskStatus.PENDING,
-    default: TaskStatus.PENDING,
+    example: TaskStatus.TO_CLEAN,
+    default: TaskStatus.TO_CLEAN,
   })
   @IsOptional()
   @IsEnum(TaskStatus)
-  status?: TaskStatus = TaskStatus.PENDING;
+  status?: TaskStatus = TaskStatus.TO_CLEAN;
 
   @ApiProperty({
     description: 'ID de la mucama asignada (opcional)',

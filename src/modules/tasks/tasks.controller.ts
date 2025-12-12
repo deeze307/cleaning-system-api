@@ -25,6 +25,7 @@ import {
   ApiQuery,
   ApiConsumes,
 } from '@nestjs/swagger';
+import { AuthGuard } from '@nestjs/passport';
 import { TasksService } from './tasks.service';
 import { CreateTaskDto } from './dto/create-task.dto';
 import { UpdateTaskDto } from './dto/update-task.dto';
@@ -32,7 +33,6 @@ import { CompleteTaskDto } from './dto/complete-task.dto';
 import { QueryTasksDto } from './dto/query-tasks.dto';
 import { TaskResponseDto } from './dto/task-response.dto';
 import { UploadImageDto } from './dto/upload-image.dto';
-import { AuthGuard } from '../../common/guards/auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/user.decorator';
@@ -41,7 +41,7 @@ import { UserRole, TaskStatus } from '../../common/interfaces/user.interface';
 
 @ApiTags('tasks')
 @ApiBearerAuth('access-token')
-@UseGuards(AuthGuard, RolesGuard)
+@UseGuards(AuthGuard('jwt'), RolesGuard)
 @Controller('tasks')
 export class TasksController {
   constructor(private readonly tasksService: TasksService) {}
@@ -62,7 +62,7 @@ export class TasksController {
   }
 
   @Get()
-  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.MAID)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.CLEANER)
   @ApiOperation({ summary: 'Obtener lista de tareas' })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
@@ -77,7 +77,7 @@ export class TasksController {
   }
 
   @Get('my-tasks')
-  @Roles(UserRole.MAID)
+  @Roles(UserRole.CLEANER)
   @ApiOperation({ 
     summary: 'Obtener tareas asignadas a la mucama actual',
     description: 'Retorna tareas asignadas y sin asignar disponibles para tomar'
@@ -87,7 +87,7 @@ export class TasksController {
   }
 
   @Get(':id')
-  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.MAID)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.CLEANER)
   @ApiOperation({ summary: 'Obtener tarea por ID' })
   findOne(@Param('id') id: string, @CurrentUser() user: User): Promise<TaskResponseDto> {
     return this.tasksService.findOne(id, user);
@@ -108,7 +108,7 @@ export class TasksController {
   }
 
   @Patch(':id/complete')
-  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.MAID)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.CLEANER)
   @ApiOperation({ 
     summary: 'Completar tarea',
     description: 'Marcar tarea como completada con observaciones e imágenes'
@@ -122,7 +122,7 @@ export class TasksController {
   }
 
   @Patch(':id/start')
-  @Roles(UserRole.MAID)
+  @Roles(UserRole.CLEANER)
   @ApiOperation({ 
     summary: 'Marcar tarea como en progreso',
     description: 'Solo mucamas pueden marcar tareas como en progreso'
@@ -159,7 +159,7 @@ export class TasksController {
   }
 
   @Post('upload-image')
-  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.MAID)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.CLEANER)
   @UseInterceptors(FileInterceptor('file'))
   @ApiConsumes('multipart/form-data')
   @ApiOperation({ 

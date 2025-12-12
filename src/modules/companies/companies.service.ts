@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
-import { FirebaseConfigService } from '../../config/firebase.config';
+import { FirestoreService } from '../../firestore/firestore.service';
 import { CreateCompanyDto } from './dto/create-company.dto';
 import { UpdateCompanyDto } from './dto/update-company.dto';
 import { QueryCompanyDto } from './dto/query-company.dto';
@@ -9,24 +9,23 @@ import { Company } from '../../common/interfaces/user.interface';
 export class CompaniesService {
   private readonly companiesCollection = 'companies';
 
-  constructor(private firebaseConfig: FirebaseConfigService) {}
+  constructor(private firestoreService: FirestoreService) {}
 
   async create(createCompanyDto: CreateCompanyDto): Promise<Company> {
-    const firestore = this.firebaseConfig.firestore;
-    
     // Verificar si ya existe una empresa con el mismo nombre
-    const existingCompany = await firestore
-      .collection(this.companiesCollection)
-      .where('name', '==', createCompanyDto.name)
-      .where('isActive', '==', true)
-      .get();
+    const existingCompanies = await this.firestoreService.findByField<Company>(
+      this.companiesCollection,
+      'name',
+      createCompanyDto.name
+    );
 
-    if (!existingCompany.empty) {
+    const activeCompany = existingCompanies.find(c => c.isActive);
+    if (activeCompany) {
       throw new BadRequestException('Ya existe una empresa con este nombre');
     }
 
-    const now = new Date();
-    const companyData: Omit<Company, 'id'> = {
+    const now = new Date().toISOString();
+    const companyData = {
       name: createCompanyDto.name,
       description: createCompanyDto.description,
       plan: createCompanyDto.plan,
@@ -36,14 +35,12 @@ export class CompaniesService {
       updatedAt: now,
     };
 
-    const docRef = await firestore
-      .collection(this.companiesCollection)
-      .add(companyData);
+    const docRef = await this.firestoreService.create(this.companiesCollection, companyData);
 
     return {
       id: docRef.id,
       ...companyData,
-    };
+    } as Company;
   }
 
   async findAll(queryDto: QueryCompanyDto): Promise<{
@@ -53,34 +50,34 @@ export class CompaniesService {
     limit: number;
     totalPages: number;
   }> {
-    const firestore = this.firebaseConfig.firestore;
-    let query = firestore.collection(this.companiesCollection).orderBy('createdAt', 'desc');
+    let companies = await this.firestoreService.findAll<Company>(this.companiesCollection);
 
     // Aplicar filtros
     if (queryDto.plan) {
-      query = query.where('plan', '==', queryDto.plan);
+      companies = companies.filter(c => c.plan === queryDto.plan);
     }
 
     if (queryDto.isActive !== undefined) {
-      query = query.where('isActive', '==', queryDto.isActive);
+      companies = companies.filter(c => c.isActive === queryDto.isActive);
     }
 
-    // Obtener todos los documentos para contar y filtrar por búsqueda
-    const snapshot = await query.get();
-    let companies = snapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-    })) as Company[];
-
-    // Filtrar por búsqueda de texto (Firestore no tiene búsqueda de texto completo)
+    // Filtrar por búsqueda de texto
     if (queryDto.search) {
       const searchTerm = queryDto.search.toLowerCase();
-      companies = companies.filter(company =>
-        company.name.toLowerCase().includes(searchTerm) ||
-        company.description?.toLowerCase().includes(searchTerm)
+      companies = companies.filter(c =>
+        c.name.toLowerCase().includes(searchTerm) ||
+        c.description?.toLowerCase().includes(searchTerm)
       );
     }
 
+    // Ordenar por createdAt descendente
+    companies.sort((a, b) => {
+      const dateA = new Date(a.createdAt).getTime();
+      const dateB = new Date(b.createdAt).getTime();
+      return dateB - dateA;
+    });
+
+    // Paginación
     const total = companies.length;
     const page = queryDto.page || 1;
     const limit = queryDto.limit || 10;
@@ -100,41 +97,38 @@ export class CompaniesService {
   }
 
   async findOne(id: string): Promise<Company> {
-    const firestore = this.firebaseConfig.firestore;
-    const doc = await firestore
-      .collection(this.companiesCollection)
-      .doc(id)
-      .get();
+    const company = await this.firestoreService.findById<Company>(
+      this.companiesCollection,
+      id
+    );
 
-    if (!doc.exists) {
+    if (!company) {
       throw new NotFoundException('Empresa no encontrada');
     }
 
-    return {
-      id: doc.id,
-      ...doc.data(),
-    } as Company;
+    return company;
   }
 
   async update(id: string, updateCompanyDto: UpdateCompanyDto): Promise<Company> {
-    const firestore = this.firebaseConfig.firestore;
-    const docRef = firestore.collection(this.companiesCollection).doc(id);
-    
     // Verificar si existe
-    const doc = await docRef.get();
-    if (!doc.exists) {
+    const existingCompany = await this.firestoreService.findById<Company>(
+      this.companiesCollection,
+      id
+    );
+
+    if (!existingCompany) {
       throw new NotFoundException('Empresa no encontrada');
     }
 
     // Si se está cambiando el nombre, verificar que no exista otro con el mismo nombre
-    if (updateCompanyDto.name) {
-      const existingCompany = await firestore
-        .collection(this.companiesCollection)
-        .where('name', '==', updateCompanyDto.name)
-        .where('isActive', '==', true)
-        .get();
+    if (updateCompanyDto.name && updateCompanyDto.name !== existingCompany.name) {
+      const companiesWithSameName = await this.firestoreService.findByField<Company>(
+        this.companiesCollection,
+        'name',
+        updateCompanyDto.name
+      );
 
-      const conflictingCompany = existingCompany.docs.find(d => d.id !== id);
+      const conflictingCompany = companiesWithSameName.find(c => c.id !== id && c.isActive);
       if (conflictingCompany) {
         throw new BadRequestException('Ya existe una empresa con este nombre');
       }
@@ -142,45 +136,48 @@ export class CompaniesService {
 
     const updateData = {
       ...updateCompanyDto,
-      updatedAt: new Date(),
+      updatedAt: new Date().toISOString(),
     };
 
-    await docRef.update(updateData);
+    await this.firestoreService.update(this.companiesCollection, id, updateData);
 
-    const updatedDoc = await docRef.get();
-    return {
-      id: updatedDoc.id,
-      ...updatedDoc.data(),
-    } as Company;
+    const updatedCompany = await this.firestoreService.findById<Company>(
+      this.companiesCollection,
+      id
+    );
+
+    return updatedCompany!;
   }
 
   async remove(id: string): Promise<void> {
-    const firestore = this.firebaseConfig.firestore;
-    
-    // Soft delete - marcar como inactivo
-    const docRef = firestore.collection(this.companiesCollection).doc(id);
-    const doc = await docRef.get();
-    
-    if (!doc.exists) {
+    // Verificar si existe
+    const company = await this.firestoreService.findById<Company>(
+      this.companiesCollection,
+      id
+    );
+
+    if (!company) {
       throw new NotFoundException('Empresa no encontrada');
     }
 
     // Verificar si tiene edificios activos
-    const buildingsSnapshot = await firestore
-      .collection('buildings')
-      .where('companyId', '==', id)
-      .where('isActive', '==', true)
-      .get();
+    const buildings = await this.firestoreService.findByField<any>(
+      'buildings',
+      'companyId',
+      id
+    );
 
-    if (!buildingsSnapshot.empty) {
+    const activeBuildings = buildings.filter(b => b.isActive);
+    if (activeBuildings.length > 0) {
       throw new BadRequestException(
         'No se puede eliminar la empresa porque tiene edificios activos. Primero desactive todos los edificios.'
       );
     }
 
-    await docRef.update({
+    // Soft delete
+    await this.firestoreService.update(this.companiesCollection, id, {
       isActive: false,
-      updatedAt: new Date(),
+      updatedAt: new Date().toISOString(),
     });
   }
 
@@ -192,34 +189,35 @@ export class CompaniesService {
     tasksCompleted: number;
     tasksPending: number;
   }> {
-    const firestore = this.firebaseConfig.firestore;
+    // Obtener edificios de la empresa
+    const buildings = await this.firestoreService.findByField<any>(
+      'buildings',
+      'companyId',
+      companyId
+    );
+    const activeBuildings = buildings.filter(b => b.isActive);
+    const totalBuildings = activeBuildings.length;
 
-    // Obtener estadísticas en paralelo
-    const [buildingsSnapshot, usersSnapshot] = await Promise.all([
-      firestore
-        .collection('buildings')
-        .where('companyId', '==', companyId)
-        .where('isActive', '==', true)
-        .get(),
-      firestore
-        .collection('users')
-        .where('companyId', '==', companyId)
-        .where('isActive', '==', true)
-        .get(),
-    ]);
-
-    const totalBuildings = buildingsSnapshot.size;
-    const totalUsers = usersSnapshot.size;
+    // Obtener usuarios de la empresa
+    const users = await this.firestoreService.findByField<any>(
+      'users',
+      'companyId',
+      companyId
+    );
+    const activeUsers = users.filter(u => u.isActive);
+    const totalUsers = activeUsers.length;
 
     // Contar habitaciones
     let totalRooms = 0;
-    for (const buildingDoc of buildingsSnapshot.docs) {
-      const roomsSnapshot = await firestore
-        .collection('rooms')
-        .where('buildingId', '==', buildingDoc.id)
-        .where('isActive', '==', true)
-        .get();
-      totalRooms += roomsSnapshot.size;
+    const buildingIds = activeBuildings.map(b => b.id);
+    
+    for (const buildingId of buildingIds) {
+      const rooms = await this.firestoreService.findByField<any>(
+        'rooms',
+        'buildingId',
+        buildingId
+      );
+      totalRooms += rooms.filter(r => r.isActive).length;
     }
 
     // Contar tareas del último mes
@@ -230,25 +228,31 @@ export class CompaniesService {
     let tasksCompleted = 0;
     let tasksPending = 0;
 
-    for (const buildingDoc of buildingsSnapshot.docs) {
-      const roomsSnapshot = await firestore
-        .collection('rooms')
-        .where('buildingId', '==', buildingDoc.id)
-        .where('isActive', '==', true)
-        .get();
+    for (const buildingId of buildingIds) {
+      const rooms = await this.firestoreService.findByField<any>(
+        'rooms',
+        'buildingId',
+        buildingId
+      );
+      const activeRooms = rooms.filter(r => r.isActive);
 
-      for (const roomDoc of roomsSnapshot.docs) {
-        const tasksSnapshot = await firestore
-          .collection('tasks')
-          .where('roomId', '==', roomDoc.id)
-          .where('createdAt', '>=', lastMonth)
-          .get();
+      for (const room of activeRooms) {
+        const tasks = await this.firestoreService.findByField<any>(
+          'tasks',
+          'roomId',
+          room.id
+        );
 
-        totalTasks += tasksSnapshot.size;
+        // Filtrar tareas del último mes
+        const recentTasks = tasks.filter(t => {
+          const taskDate = new Date(t.createdAt);
+          return taskDate >= lastMonth;
+        });
 
-        tasksSnapshot.docs.forEach(taskDoc => {
-          const taskData = taskDoc.data();
-          if (taskData.status === 'completed' || taskData.status === 'verified') {
+        totalTasks += recentTasks.length;
+
+        recentTasks.forEach(task => {
+          if (task.status === 'completed' || task.status === 'verified') {
             tasksCompleted++;
           } else {
             tasksPending++;

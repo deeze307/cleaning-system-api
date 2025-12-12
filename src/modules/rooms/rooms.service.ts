@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException, BadRequestException, ForbiddenException } from '@nestjs/common';
 import { FirebaseConfigService } from '../../config/firebase.config';
+import { FirestoreService } from 'src/firestore/firestore.service';
 import { BuildingsService } from '../buildings/buildings.service';
 import { CreateRoomDto } from './dto/create-room.dto';
 import { UpdateRoomDto } from './dto/update-room.dto';
@@ -15,29 +16,32 @@ export class RoomsService {
 
   constructor(
     private firebaseConfig: FirebaseConfigService,
+    private readonly firestoreService: FirestoreService,
     private buildingsService: BuildingsService,
   ) {}
 
+  //const firestore = this.firebaseConfig.firestore;
+
   async create(createRoomDto: CreateRoomDto, createdBy: User): Promise<RoomResponseDto> {
-    const firestore = this.firebaseConfig.firestore;
-    
     // Verificar que el edificio existe y que el usuario tiene permisos
     const building = await this.buildingsService.findOne(createRoomDto.buildingId, createdBy);
 
     // Solo admins y super admins pueden crear habitaciones
-    if (createdBy.role === UserRole.MAID) {
+    if (createdBy.role === UserRole.CLEANER) {
       throw new ForbiddenException('No tenés permisos para crear habitaciones');
     }
 
     // Verificar que no existe otra habitación con el mismo nombre en el edificio
-    const existingRoom = await firestore
-      .collection(this.roomsCollection)
-      .where('buildingId', '==', createRoomDto.buildingId)
-      .where('name', '==', createRoomDto.name)
-      .where('isActive', '==', true)
-      .get();
+    const existingRooms = await this.firestoreService.findByMultipleFields<Room>(
+      this.roomsCollection,
+      {
+        buildingId: createRoomDto.buildingId,
+        name: createRoomDto.name,
+        isActive: true
+      }
+    );
 
-    if (!existingRoom.empty) {
+    if (existingRooms.length > 0) {
       throw new BadRequestException('Ya existe una habitación con este nombre en el edificio');
     }
 
@@ -46,11 +50,17 @@ export class RoomsService {
       throw new BadRequestException('La habitación debe tener al menos una cama');
     }
 
-    const now = new Date();
-    const roomData: Omit<Room, 'id'> = {
+    const now = new Date().toISOString();
+    
+    // Convertir DTO a objeto plano
+    const roomData = {
       buildingId: createRoomDto.buildingId,
       name: createRoomDto.name,
-      bedConfiguration: createRoomDto.bedConfiguration,
+      bedConfiguration: {
+        kingBeds: createRoomDto.bedConfiguration.kingBeds,
+        individualBeds: createRoomDto.bedConfiguration.individualBeds,
+        description: createRoomDto.bedConfiguration.description
+      },
       floor: createRoomDto.floor,
       area: createRoomDto.area,
       description: createRoomDto.description,
@@ -60,9 +70,7 @@ export class RoomsService {
       updatedAt: now,
     };
 
-    const docRef = await firestore
-      .collection(this.roomsCollection)
-      .add(roomData);
+    const docRef = await this.firestoreService.create(this.roomsCollection, roomData);
 
     return {
       id: docRef.id,
@@ -72,7 +80,7 @@ export class RoomsService {
       totalTasks: 0,
       pendingTasks: 0,
       completedTasksToday: 0,
-      bedSummary: this.generateBedSummary(createRoomDto.bedConfiguration),
+      bedSummary: this.generateBedSummary(roomData.bedConfiguration),
       ...roomData,
     };
   }
@@ -200,60 +208,74 @@ export class RoomsService {
   }
 
   async update(id: string, updateRoomDto: UpdateRoomDto, requestUser: User): Promise<RoomResponseDto> {
-    const firestore = this.firebaseConfig.firestore;
-    const docRef = firestore.collection(this.roomsCollection).doc(id);
-    
-    const doc = await docRef.get();
-    if (!doc.exists) {
-      throw new NotFoundException('Habitación no encontrada');
-    }
-
-    const roomData = doc.data() as Room;
-
-    // Verificar permisos
-    await this.buildingsService.findOne(roomData.buildingId, requestUser);
-
-    if (requestUser.role === UserRole.MAID) {
-      // Las mucamas solo pueden actualizar cleaningNotes
-      const allowedFields = ['cleaningNotes'];
-      const hasInvalidField = Object.keys(updateRoomDto).some(key => !allowedFields.includes(key));
-      
-      if (hasInvalidField) {
-        throw new ForbiddenException('Solo podés modificar las notas de limpieza');
-      }
-    }
-
-    // Si se cambia el nombre, verificar que no exista otro con el mismo nombre
-    if (updateRoomDto.name && updateRoomDto.name !== roomData.name) {
-      const existingRoom = await firestore
-        .collection(this.roomsCollection)
-        .where('buildingId', '==', roomData.buildingId)
-        .where('name', '==', updateRoomDto.name)
-        .where('isActive', '==', true)
-        .get();
-
-      const conflictingRoom = existingRoom.docs.find(d => d.id !== id);
-      if (conflictingRoom) {
-        throw new BadRequestException('Ya existe una habitación con este nombre en el edificio');
-      }
-    }
-
-    // Validar configuración de camas si se actualiza
-    if (updateRoomDto.bedConfiguration) {
-      if (updateRoomDto.bedConfiguration.kingBeds === 0 && updateRoomDto.bedConfiguration.individualBeds === 0) {
-        throw new BadRequestException('La habitación debe tener al menos una cama');
-      }
-    }
-
-    const updateData = {
-      ...updateRoomDto,
-      updatedAt: new Date(),
-    };
-
-    await docRef.update(updateData);
-
-    return this.findOne(id, requestUser);
+  // Verificar que existe
+  const room = await this.firestoreService.findById<Room>(this.roomsCollection, id);
+  if (!room) {
+    throw new NotFoundException('Habitación no encontrada');
   }
+
+  // Verificar permisos
+  await this.buildingsService.findOne(room.buildingId, requestUser);
+
+  if (requestUser.role === UserRole.CLEANER) {
+    // Las mucamas solo pueden actualizar cleaningNotes
+    const allowedFields = ['cleaningNotes'];
+    const hasInvalidField = Object.keys(updateRoomDto).some(key => !allowedFields.includes(key));
+    
+    if (hasInvalidField) {
+      throw new ForbiddenException('Solo podés modificar las notas de limpieza');
+    }
+  }
+
+  // Si se cambia el nombre, verificar que no exista otro con el mismo nombre
+  if (updateRoomDto.name && updateRoomDto.name !== room.name) {
+    const existingRooms = await this.firestoreService.findByMultipleFields<Room>(
+      this.roomsCollection,
+      {
+        buildingId: room.buildingId,
+        name: updateRoomDto.name,
+        isActive: true
+      }
+    );
+
+    const conflictingRoom = existingRooms.find(r => r.id !== id);
+    if (conflictingRoom) {
+      throw new BadRequestException('Ya existe una habitación con este nombre en el edificio');
+    }
+  }
+
+  // Validar configuración de camas si se actualiza
+  if (updateRoomDto.bedConfiguration) {
+    if (updateRoomDto.bedConfiguration.kingBeds === 0 && updateRoomDto.bedConfiguration.individualBeds === 0) {
+      throw new BadRequestException('La habitación debe tener al menos una cama');
+    }
+  }
+
+  // Convertir DTO a objeto plano
+  const updateData: any = {
+    updatedAt: new Date().toISOString(),
+  };
+
+  if (updateRoomDto.name) updateData.name = updateRoomDto.name;
+  if (updateRoomDto.floor !== undefined) updateData.floor = updateRoomDto.floor;
+  if (updateRoomDto.area !== undefined) updateData.area = updateRoomDto.area;
+  if (updateRoomDto.description !== undefined) updateData.description = updateRoomDto.description;
+  if (updateRoomDto.cleaningNotes !== undefined) updateData.cleaningNotes = updateRoomDto.cleaningNotes;
+  if (updateRoomDto.isActive !== undefined) updateData.isActive = updateRoomDto.isActive;
+  
+  // Convertir bedConfiguration a objeto plano si existe
+  if (updateRoomDto.bedConfiguration) {
+    updateData.bedConfiguration = {
+      kingBeds: updateRoomDto.bedConfiguration.kingBeds,
+      individualBeds: updateRoomDto.bedConfiguration.individualBeds,
+      description: updateRoomDto.bedConfiguration.description
+    };
+  }
+
+  await this.firestoreService.update(this.roomsCollection, id, updateData);
+
+  return this.findOne(id, requestUser);
+}
 
   async remove(id: string, requestUser: User): Promise<void> {
     const firestore = this.firebaseConfig.firestore;
@@ -269,7 +291,7 @@ export class RoomsService {
     // Verificar permisos
     await this.buildingsService.findOne(roomData.buildingId, requestUser);
 
-    if (requestUser.role === UserRole.MAID) {
+    if (requestUser.role === UserRole.CLEANER) {
       throw new ForbiddenException('No tenés permisos para eliminar habitaciones');
     }
 
@@ -277,7 +299,7 @@ export class RoomsService {
     const pendingTasksSnapshot = await firestore
       .collection(this.tasksCollection)
       .where('roomId', '==', id)
-      .where('status', 'in', ['pending', 'urgent', 'in_progress'])
+      .where('status', 'in', ['to_clean', 'to_clean_urgent', 'urgent', 'in_progress'])
       .get();
 
     if (!pendingTasksSnapshot.empty) {
@@ -365,7 +387,7 @@ export class RoomsService {
       firestore.collection(this.tasksCollection).where('roomId', '==', roomId).get(),
       firestore.collection(this.tasksCollection)
         .where('roomId', '==', roomId)
-        .where('status', 'in', ['pending', 'urgent', 'in_progress'])
+        .where('status', 'in', ['to_clean', 'to_clean_urgent', 'urgent', 'in_progress'])
         .get(),
       firestore.collection(this.tasksCollection)
         .where('roomId', '==', roomId)

@@ -18,12 +18,12 @@ import {
   ApiBearerAuth,
   ApiQuery,
 } from '@nestjs/swagger';
+import { AuthGuard } from '@nestjs/passport';
 import { RoomsService } from './rooms.service';
 import { CreateRoomDto } from './dto/create-room.dto';
 import { UpdateRoomDto } from './dto/update-room.dto';
 import { QueryRoomsDto } from './dto/query-rooms.dto';
 import { RoomResponseDto } from './dto/room-response.dto';
-import { AuthGuard } from '../../common/guards/auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/user.decorator';
@@ -32,7 +32,7 @@ import { UserRole } from '../../common/interfaces/user.interface';
 
 @ApiTags('rooms')
 @ApiBearerAuth('access-token')
-@UseGuards(AuthGuard, RolesGuard)
+@UseGuards(AuthGuard('jwt'), RolesGuard)
 @Controller('rooms')
 export class RoomsController {
   constructor(private readonly roomsService: RoomsService) {}
@@ -53,7 +53,7 @@ export class RoomsController {
   }
 
   @Get()
-  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.MAID)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.CLEANER)
   @ApiOperation({ summary: 'Obtener lista de habitaciones' })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
@@ -66,14 +66,14 @@ export class RoomsController {
   }
 
   @Get('by-building/:buildingId')
-  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.MAID)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.CLEANER)
   @ApiOperation({ summary: 'Obtener habitaciones por edificio' })
   getRoomsByBuilding(@Param('buildingId') buildingId: string, @CurrentUser() user: User) {
     return this.roomsService.getRoomsByBuilding(buildingId, user);
   }
 
   @Get('select-options/:buildingId')
-  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.MAID)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.CLEANER)
   @ApiOperation({ 
     summary: 'Obtener habitaciones en formato para selects',
     description: 'Retorna solo id, nombre y resumen de camas para dropdowns'
@@ -83,14 +83,14 @@ export class RoomsController {
   }
 
   @Get(':id')
-  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.MAID)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.CLEANER)
   @ApiOperation({ summary: 'Obtener habitación por ID' })
   findOne(@Param('id') id: string, @CurrentUser() user: User): Promise<RoomResponseDto> {
     return this.roomsService.findOne(id, user);
   }
 
   @Patch(':id')
-  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.MAID)
+  @Roles(UserRole.SUPER_ADMIN, UserRole.ADMIN, UserRole.CLEANER)
   @ApiOperation({ 
     summary: 'Actualizar habitación',
     description: 'Admins pueden actualizar todo, mucamas solo cleaningNotes'
