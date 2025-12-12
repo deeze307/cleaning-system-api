@@ -12,7 +12,6 @@ async function bootstrap() {
   console.log('PORT:', process.env.PORT);
   console.log('FIREBASE_PROJECT_ID:', process.env.FIREBASE_PROJECT_ID);
   console.log('FRONTEND_URL:', process.env.FRONTEND_URL);
-  console.log('Archivo .env cargado:', `.env.${process.env.NODE_ENV || 'local'}`);
 
   // Configuración global de validación
   app.useGlobalPipes(
@@ -23,13 +22,9 @@ async function bootstrap() {
     }),
   );
 
-  // Configuración de CORS
-  const allowedOrigins = process.env.NODE_ENV === 'production'
-  ? [process.env.FRONTEND_URL, process.env.API_URL]
-  : '*';
-
+  // Configuración de CORS - UNA SOLA VEZ
   app.enableCors({
-    origin: allowedOrigins,
+    origin: '*', // Dejalo abierto por ahora para testing
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
   });
@@ -56,7 +51,8 @@ async function bootstrap() {
   
   await app.listen(port, '0.0.0.0');
   
-  console.log(`🚀 Aplicación corriendo en: http://localhost:${port}`);
-  console.log(`📚 Documentación Swagger: http://localhost:${port}/api/docs`);
+  console.log(`🚀 App corriendo en puerto ${port}`);
+  console.log(`📚 Docs en /api/docs`);
+  console.log(`🌍 Listening on 0.0.0.0:${port}`);
 }
 bootstrap();
