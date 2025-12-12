@@ -48,8 +48,14 @@ async function bootstrap() {
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api/docs', app, document);
 
+  app.enableCors({
+    origin: '*',
+    credentials: true,
+  });
+
   const port = process.env.PORT || 3000;
-  await app.listen(port);
+  
+  await app.listen(port, '0.0.0.0');
   
   console.log(`🚀 Aplicación corriendo en: http://localhost:${port}`);
   console.log(`📚 Documentación Swagger: http://localhost:${port}/api/docs`);
