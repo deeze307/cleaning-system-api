@@ -6,6 +6,14 @@ import { AppModule } from './app.module';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
+  // LOG PARA VERIFICAR VARIABLES DE ENTORNO
+  console.log('🔍 Environment Check:');
+  console.log('NODE_ENV:', process.env.NODE_ENV);
+  console.log('PORT:', process.env.PORT);
+  console.log('FIREBASE_PROJECT_ID:', process.env.FIREBASE_PROJECT_ID);
+  console.log('FRONTEND_URL:', process.env.FRONTEND_URL);
+  console.log('Archivo .env cargado:', `.env.${process.env.NODE_ENV || 'local'}`);
+
   // Configuración global de validación
   app.useGlobalPipes(
     new ValidationPipe({

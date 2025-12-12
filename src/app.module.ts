@@ -16,6 +16,8 @@ import appConfig from './config/app.config';
     ConfigModule.forRoot({
       load: [appConfig],
       isGlobal: true,
+      envFilePath: '.env.local',
+      ignoreEnvFile: process.env.NODE_ENV === 'production',
     }),
     ThrottlerModule.forRoot([{
       ttl: 60000,
